@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I2C Transfer Timed Out 與 MPU6050 Probe Failure (-110) - Embedded Linux Debug CookBook</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Prism.js Tomorrow Theme CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <!-- MathJax CDN -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']]
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        .terminal-bg {
+            background-color: #0B0F19;
+        }
+        pre[class*="language-"] {
+            background: #0B0F19 !important;
+            margin: 0 !important;
+            padding: 1rem !important;
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen font-sans selection:bg-sky-500 selection:text-white">
+
+    <!-- 頂部導航 -->
+    <header class="border-b border-slate-800 bg-slate-950/70 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <a href="../index.html" class="flex items-center gap-2 text-slate-400 hover:text-sky-400 transition text-sm font-medium">
+                    <i class="fa-solid fa-arrow-left"></i> 返回首頁
+                </a>
+                <span class="text-slate-600">/</span>
+                <span class="text-xs font-mono text-slate-400">Driver & Hardware Debug Entry</span>
+            </div>
+            <div class="text-xs text-slate-400 font-mono flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                <span>Severity: Critical</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-10 space-y-10">
+
+        <!-- Header 區域 -->
+        <section class="bg-slate-800 border border-slate-700 rounded-xl p-8 shadow-xl relative overflow-hidden">
+            <div class="absolute -right-6 -bottom-10 text-slate-700/20 text-9xl pointer-events-none font-mono font-bold select-none">
+                I2C
+            </div>
+            <div class="relative z-10 space-y-4">
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <span class="text-slate-400 font-mono"><i class="fa-regular fa-calendar-days mr-1.5"></i>2026-11-09</span>
+                    <span class="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-semibold tracking-wide">
+                        <i class="fa-solid fa-triangle-exclamation mr-1"></i>Critical
+                    </span>
+                    <div class="flex flex-wrap gap-1.5 ml-auto">
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Driver</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">I2C</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Device Tree</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Hardware</span>
+                    </div>
+                </div>
+
+                <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-snug">
+                    I2C Transfer Timed Out 與 MPU6050 Probe 失敗 (-110)
+                </h1>
+
+                <p class="text-slate-400 text-sm sm:text-base leading-relaxed">
+                    在 Linux 5.10 平台掛載 MPU6050 慣性感測器驅動時，系統持續拋出 transfer timed out 錯誤（-110 ETIMEDOUT）。本文透過示波器實測 Open-drain 電氣特性，排查 PCB 缺少上拉電阻與 Device Tree 內部弱上拉缺失問題。
+                </p>
+            </div>
+        </section>
+
+        <!-- 模組一：問題現象與日誌重現 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-rose-500/10 text-rose-400 rounded-lg">
+                    <i class="fa-solid fa-bug"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組一：問題現象與日誌重現 (Symptom & Log Dump)</h2>
+            </div>
+
+            <p class="text-sm text-slate-300">
+                載入 <code class="text-sky-300 font-mono">inv-mpu6050-i2c</code> 驅動模組時，核心日誌重複噴出超時訊息，感測器 probe 失敗：
+            </p>
+
+            <!-- 終端機模擬區塊：dmesg -->
+            <div class="terminal-bg border border-slate-800 rounded-lg overflow-hidden shadow-2xl">
+                <div class="bg-slate-950/80 px-4 py-2.5 border-b border-slate-800/80 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+                        <span class="text-xs text-slate-400 font-mono ml-2">dmesg -w Output</span>
+                    </div>
+                    <span class="text-xs text-rose-400/80 font-mono">errno -110 (ETIMEDOUT)</span>
+                </div>
+                <pre class="language-bash"><code class="language-bash">[   15.421000] i2c 1-0068: transfer timed out
+[   15.426000] mpu6050 1-0068: probe of 1-0068 failed with error -110
+[   15.431200] inv-mpu6050-i2c: probe of 1-0068 failed with error -110</code></pre>
+            </div>
+
+            <p class="text-sm text-slate-300 pt-2">
+                嘗試使用 <code class="text-sky-300 font-mono">i2c-tools</code> 進行匯流排盲掃，位址 <code class="text-amber-300 font-mono">0x68</code> 完全無回應：
+            </p>
+
+            <!-- 終端機模擬區塊：i2cdetect -->
+            <div class="terminal-bg border border-slate-800 rounded-lg overflow-hidden shadow-2xl">
+                <div class="bg-slate-950/80 px-4 py-2.5 border-b border-slate-800/80 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full bg-slate-600 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-slate-600 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-slate-600 inline-block"></span>
+                        <span class="text-xs text-slate-400 font-mono ml-2">i2cdetect -y -r 1</span>
+                    </div>
+                    <span class="text-xs text-slate-400 font-mono">Bus Scan Empty</span>
+                </div>
+                <pre class="language-bash"><code class="language-bash">root@embedded:~# i2cdetect -y -r 1
+     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00:          -- -- -- -- -- -- -- -- -- -- -- -- -- 
+10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+20: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+50: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+70: -- -- -- -- -- -- -- --                         </code></pre>
+            </div>
+        </section>
+
+        <!-- 模組二：根本原因分析 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-sky-500/10 text-sky-400 rounded-lg">
+                    <i class="fa-solid fa-microscope"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組二：根本原因分析 (Root Cause Analysis)</h2>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-rose-400 flex items-center gap-2">
+                        <i class="fa-solid fa-wave-square text-sm"></i> I2C 開漏極 (Open-Drain) 電氣拓撲
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        I2C 匯流排標準（NXP UM10204）規定 SDA 與 SCL 訊號線必須採用開漏極（Open-Drain）架構。晶片內部晶體管只能將線路下拉至低電平（0V），無法主動驅動高電平。
+                    </p>
+                    <p class="text-sm text-slate-400">
+                        示波器量測 SCL/SDA 探針顯示電位持續為 0V（低電平鎖死）。由於匯流排無任何上拉源，I2C 控制器發送 START condition 後等待訊號線釋放高電平，但始終處於 Low 狀態，核心控制器驅動觸發逾時（ETIMEDOUT = 110）。
+                    </p>
+                </div>
+
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-amber-300 flex items-center gap-2">
+                        <i class="fa-solid fa-code-merge text-sm"></i> 軟體 Device Tree Pinctrl 遺漏
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        查驗設備樹 <code class="text-sky-300 font-mono">pinctrl-0</code> 設定，發現 I2C 引腳節點只配置了 pinmux 多路複用，未開啟晶片內建的上拉偏壓設定（<code class="text-rose-400 font-mono">bias-pull-up</code> 或相應暫存器）。
+                    </p>
+                    <p class="text-sm text-slate-400">
+                        外圍感測器模組 PCB 端亦未焊接外部上拉電阻，造成線路處於浮接/偏低狀態，致使軟體與硬體皆無上拉來源。
+                    </p>
+                </div>
+            </div>
+
+            <!-- 數學計算區塊（MathJax 展示） -->
+            <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-6 space-y-4">
+                <h3 class="text-sm font-semibold text-sky-400 uppercase tracking-wider font-mono flex items-center gap-2">
+                    <i class="fa-solid fa-calculator"></i> I2C 上拉電阻阻值精確計算公式
+                </h3>
+                <p class="text-xs text-slate-300">
+                    根據 I2C 匯流排規格，上拉電阻 $R_p$ 的範圍受限於匯流排負載電容 $C_b$ 與最大容許上升時間 $t_r$：
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                    <div class="bg-slate-950 p-4 rounded border border-slate-800 space-y-2">
+                        <span class="text-slate-400 font-bold block mb-1">最小阻值限制（避免驅動端吸入過大電流）：</span>
+                        <div class="text-sky-300 text-sm overflow-x-auto py-1">
+                            $$R_{p(\min)} = \frac{V_{DD} - V_{OL(\max)}}{I_{OL}}$$
+                        </div>
+                        <p class="text-slate-400">以 $V_{DD} = 3.3\text{ V}, V_{OL} = 0.4\text{ V}, I_{OL} = 3\text{ mA}$ 計算：$R_{p(\min)} = \frac{2.9}{0.003} \approx 966\ \Omega$</p>
+                    </div>
+
+                    <div class="bg-slate-950 p-4 rounded border border-slate-800 space-y-2">
+                        <span class="text-slate-400 font-bold block mb-1">最大阻值限制（受上升時間 $t_r$ 與總電容 $C_b$ 限制）：</span>
+                        <div class="text-sky-300 text-sm overflow-x-auto py-1">
+                            $$R_{p(\max)} = \frac{t_r}{0.8473 \times C_b}$$
+                        </div>
+                        <p class="text-slate-400">標準模式 ($100\text{ kHz}$) 下 $t_r \le 1000\text{ ns}$，若 $C_b = 200\text{ pF}$：$R_{p(\max)} \approx 5.9\text{ k}\Omega$。故最佳推薦值取 <strong>$4.7\text{ k}\Omega$</strong>。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組三：排查與修復步驟 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                    <i class="fa-solid fa-screwdriver-wrench"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組三：排查與修復步驟 (Step-by-Step Fix)</h2>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 步驟 1 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">1</span>
+                        硬體層修復：外接 $4.7\text{ k}\Omega$ 上拉電阻
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        在 SDA 與 SCL 接腳分別串接一顆 $4.7\text{ k}\Omega$（0402 或 0603 封裝）電阻至系統 $3.3\text{ V}$（VCC）電源軌。用示波器確認未通訊時 SCL/SDA 電位維持在穩定的 $3.3\text{ V}$。
+                    </p>
+                </div>
+
+                <!-- 步驟 2 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">2</span>
+                        軟體 Device Tree (DTS) 修復：加入內部上拉與節點宣告
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        修改板級 Device Tree 文件（如 <code class="text-sky-300 font-mono">arch/arm/boot/dts/soc-board.dts</code>），在 pinctrl 節點開啟 <code class="text-emerald-400 font-mono">bias-pull-up</code> 並綁定感測器節點：
+                    </p>
+                    <pre class="language-diff"><code class="language-diff">--- a/arch/arm/boot/dts/soc-board.dts
++++ b/arch/arm/boot/dts/soc-board.dts
+@@ -82,6 +82,7 @@
+ 	i2c1_pins: i2c1-pins {
+ 		pinmux = &lt;PIN_I2C1_SDA&gt;, &lt;PIN_I2C1_SCL&gt;;
++		bias-pull-up;
+ 	};
+ };
+ 
+@@ -105,4 +106,12 @@
+ &amp;i2c1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = &lt;&amp;i2c1_pins&gt;;
+ 	status = "okay";
++
++	mpu6050@68 {
++		compatible = "invensense,mpu6050";
++		reg = &lt;0x68&gt;;
++		interrupt-parent = &lt;&amp;gpio1&gt;;
++		interrupts = &lt;14 IRQ_TYPE_EDGE_RISING&gt;;
++	};
+ };</code></pre>
+                </div>
+
+                <!-- 步驟 3 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">3</span>
+                        重新編譯 Device Tree Blob (DTB) 並重啟
+                    </div>
+                    <pre class="language-bash"><code class="language-bash"># 編譯設備樹
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- dtbs
+
+# 替換 Target 開發板上的 DTB 檔案
+scp arch/arm/boot/dts/soc-board.dtb root@192.168.1.50:/boot/
+ssh root@192.168.1.50 "sync && reboot"</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組四：驗證與預防措施 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組四：驗證與預防措施 (Verification & Checklist)</h2>
+            </div>
+
+            <!-- 驗證日誌與指令 -->
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-4">
+                <h3 class="text-sm font-semibold text-emerald-400 font-mono flex items-center gap-2">
+                    <i class="fa-solid fa-check"></i> 驗證修復結果：匯流排掃描與 IIO 讀值
+                </h3>
+                
+                <p class="text-xs text-slate-300">執行 <code class="text-sky-300 font-mono">i2cdetect -y -r 1</code>，位址 <code class="text-emerald-400 font-mono">0x68</code> 顯示為 <code class="text-emerald-400 font-mono">UU</code>（表示核心驅動已成功鎖定 probe 該裝置）：</p>
+                <div class="terminal-bg border border-slate-800 rounded p-4 font-mono text-xs text-slate-300">
+                    <pre class="text-slate-300">
+     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00:          -- -- -- -- -- -- -- -- -- -- -- -- -- 
+10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+20: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+50: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+60: -- -- -- -- -- -- -- -- <span class="text-emerald-400 font-bold">UU</span> -- -- -- -- -- -- -- 
+70: -- -- -- -- -- -- -- --                         </pre>
+                </div>
+
+                <p class="text-xs text-slate-300 pt-2">讀取 Linux IIO（Industrial I/O）子系統資料確認數據傳輸正常：</p>
+                <pre class="language-bash"><code class="language-bash"># 讀取 X 軸加速度原始數值
+root@embedded:~# cat /sys/bus/iio/devices/iio:device0/in_accel_x_raw
+-142
+# 讀取陀螺儀取樣頻率
+root@embedded:~# cat /sys/bus/iio/devices/iio:device0/sampling_frequency
+100</code></pre>
+            </div>
+
+            <!-- 防呆檢查清單 -->
+            <div class="bg-slate-800/60 border border-slate-700/80 rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2 font-mono">
+                    <i class="fa-solid fa-clipboard-list text-sky-400"></i> 硬體與 BSP 審查清單 (Checklist)
+                </h3>
+                <ul class="space-y-2.5 text-xs text-slate-300">
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>硬體線路審查：</strong>所有掛載於 I2C 匯流排的 Peripheral 模組，必須確認硬體電路圖上至少存在一組外部上拉電阻（建議 2.2kΩ ~ 4.7kΩ）。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>內部弱上拉限制注意：</strong>SoC 內部弱上拉阻值通常較大（約 40kΩ ~ 100kΩ），在高速傳輸或線路電容較大時上升時間會嚴重失真，不可完全依賴內部 Pull-up 代替外部電阻。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>示波器波形驗證：</strong>除錯時務必先確認 idle 狀態為 high，並測量 SCL/SDA 方波之上升時間（Rise Time）是否符合協議規範。</span>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 底部版權 -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
+        Embedded Linux Debug CookBook &bull; Powered by Antigravity Agent &bull; 2026-11-09
+    </footer>
+
+    <!-- Prism.js Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-diff.min.js"></script>
+</body>
+</html>

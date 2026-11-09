@@ -1,0 +1,22 @@
+【問題現象】
+在 U-Boot 環境下嘗試使用 TFTP 下載 zImage 與設備樹時逾時失敗：
+=> tftp 0x82000000 zImage
+ethernet@01c50000: PHY reset timed out
+ETH: link down
+TFTP error: 'File not found' (1)
+Retry count exceeded; starting again
+
+【排查經過與根本原因】
+1. 檢查 Host 端 TFTP 伺服器狀態（systemctl status tftpd-hpa），服務有啟動，但在 /var/lib/tftpboot 權限僅有 root 可讀。
+2. 開發板端的 U-Boot 環境變數：
+   - serverip 設定為 192.168.1.100（但 Host 實際 IP 因 DHCP 變動已成為 192.168.1.120）。
+   - ipaddr 與板子網段不合。
+3. 實體網路 PHY 晶片重置延遲（reset-gpios）在 DTS 中宣告的時間過短（僅 10ms），導致 PHY 晶片尚未準備就緒 U-Boot 就發送 MII 讀寫指令。
+
+【解決方案】
+1. 調整 U-Boot 環境變數：
+   setenv ipaddr 192.168.1.50
+   setenv serverip 192.168.1.120
+   saveenv
+2. 修改 Host 端的檔案權限：chmod 777 /var/lib/tftpboot/zImage
+3. 在 U-Boot 設備樹中將 phy-reset-duration 改為 50ms。重啟後 TFTP 傳輸速度達 3.2 MiB/s。

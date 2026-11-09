@@ -1,0 +1,18 @@
+【問題現象】
+在 Linux 5.10 載入自製 MPU6050 慣性感測器 I2C 驅動時，系統持續噴錯且無法抓到裝置：
+[   15.421000] i2c 1-0068: transfer timed out
+[   15.426000] mpu6050 1-0068: probe of 1-0068 failed with error -110
+
+【排查經過與根本原因】
+1. 使用 i2cdetect -y -r 1 掃描總線，整張掃描表都顯示 "--"，完全看不到 0x68 位址。
+2. 用示波器量測 SCL 與 SDA 接腳，發現電位始終保持在 0V 低電平，無法被拉高。
+3. 根本原因有二：
+   - 硬體層面：外圍感測器模組缺少上拉電阻（Pull-up Resistor），而 I2C 為 Open-drain 架構。
+   - 軟體層面：Device Tree (DTS) 內的 pinctrl 設定中，未啟用晶片內建的內部上拉（bias-pull-up）。
+
+【解決方案】
+1. 修改 Device Tree，在 i2c1_pins 節點中加入內部弱上拉設定：
+   pinmux = <PIN_I2C1_SDA>, <PIN_I2C1_SCL>;
+   bias-pull-up;
+2. 硬體端在 SDA/SCL 各外接一顆 4.7kΩ 電阻至 3.3V VCC。
+3. 重新編譯 dtb 並載入後，i2cdetect 成功於 0x68 顯示 UU（驅動成功佔用）。

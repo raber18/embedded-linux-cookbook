@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kernel Panic: VFS: Unable to mount root fs on unknown-block(179,2) - Embedded Linux Debug CookBook</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Prism.js Tomorrow Theme CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <!-- MathJax CDN -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']]
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        .terminal-bg {
+            background-color: #0B0F19;
+        }
+        pre[class*="language-"] {
+            background: #0B0F19 !important;
+            margin: 0 !important;
+            padding: 1rem !important;
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen font-sans selection:bg-sky-500 selection:text-white">
+
+    <!-- 頂部導航 -->
+    <header class="border-b border-slate-800 bg-slate-950/70 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <a href="../index.html" class="flex items-center gap-2 text-slate-400 hover:text-sky-400 transition text-sm font-medium">
+                    <i class="fa-solid fa-arrow-left"></i> 返回首頁
+                </a>
+                <span class="text-slate-600">/</span>
+                <span class="text-xs font-mono text-slate-400">Kernel Debug Entry</span>
+            </div>
+            <div class="text-xs text-slate-400 font-mono flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                <span>Severity: Critical</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-10 space-y-10">
+
+        <!-- Header 區域 -->
+        <section class="bg-slate-800 border border-slate-700 rounded-xl p-8 shadow-xl relative overflow-hidden">
+            <div class="absolute -right-10 -bottom-10 text-slate-700/20 text-9xl pointer-events-none font-mono font-bold select-none">
+                PANIC
+            </div>
+            <div class="relative z-10 space-y-4">
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <span class="text-slate-400 font-mono"><i class="fa-regular fa-calendar-days mr-1.5"></i>2026-11-09</span>
+                    <span class="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-semibold tracking-wide">
+                        <i class="fa-solid fa-triangle-exclamation mr-1"></i>Critical
+                    </span>
+                    <div class="flex flex-wrap gap-1.5 ml-auto">
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Kernel</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Storage</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">U-Boot</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">VFS</span>
+                    </div>
+                </div>
+
+                <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-snug">
+                    Kernel Panic: VFS: Unable to mount root fs on unknown-block(179,2)
+                </h1>
+
+                <p class="text-slate-400 text-sm sm:text-base leading-relaxed">
+                    自訂編譯 Linux 核心啟動於 Raspberry Pi (BCM2835) 開發板時，核心無法掛載 MMC/SD 卡的 ext4 根檔案系統並觸發 Panic。本文深入追蹤核心啟動命名空間初始化機制，分析驅動模組化與內建（Built-in）對 Early Boot 階段的致命影響。
+                </p>
+            </div>
+        </section>
+
+        <!-- 模組一：問題現象與日誌重現 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-rose-500/10 text-rose-400 rounded-lg">
+                    <i class="fa-solid fa-bug"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組一：問題現象與日誌重現 (Symptom & Log Dump)</h2>
+            </div>
+
+            <p class="text-sm text-slate-300">
+                開發板上電啟動後，U-Boot 成功加載核心 Image 與 Device Tree (bcm2835-rpi-b.dtb) 並將控制權轉交核心。然而 Linux 核心啟動約 2.3 秒後，日誌輸出中斷並印出死當回溯堆疊：
+            </p>
+
+            <!-- 終端機模擬區塊 -->
+            <div class="terminal-bg border border-slate-800 rounded-lg overflow-hidden shadow-2xl">
+                <div class="bg-slate-950/80 px-4 py-2.5 border-b border-slate-800/80 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+                        <span class="text-xs text-slate-400 font-mono ml-2">UART Console Serial Dump</span>
+                    </div>
+                    <span class="text-xs text-rose-400/80 font-mono">Kernel Crash Dump</span>
+                </div>
+                <pre class="language-bash"><code class="language-bash">[    2.341205] Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(179,2)
+[    2.349012] CPU: 0 PID: 1 Comm: swapper/0 Not tainted 5.15.0 #1
+[    2.355100] Hardware name: BCM2835
+[    2.358500] Call trace:
+[    2.361000] [&lt;c010c210&gt;] dump_backtrace+0x0/0x15c
+[    2.365800] [&lt;c08e5f20&gt;] panic+0x12c/0x334
+[    2.370400] [&lt;c0b62140&gt;] mount_block_root+0x240/0x2f8
+[    2.375200] [&lt;c0b62450&gt;] mount_root+0x138/0x158
+[    2.379800] [&lt;c0b625d8&gt;] prepare_namespace+0x168/0x1b4
+[    2.384700] [&lt;c0b61cd4&gt;] kernel_init_freeable+0x21c/0x250
+[    2.389900] [&lt;c08f4950&gt;] kernel_init+0x18/0x130
+[    2.394200] [&lt;c0100148&gt;] ret_from_fork+0x14/0x3c
+[    2.398600] ---[ end Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(179,2) ]---</code></pre>
+            </div>
+        </section>
+
+        <!-- 模組二：根本原因分析 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-sky-500/10 text-sky-400 rounded-lg">
+                    <i class="fa-solid fa-microscope"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組二：根本原因分析 (Root Cause Analysis)</h2>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-sky-300 flex items-center gap-2">
+                        <i class="fa-solid fa-hard-drive text-sm"></i> 裝置編號解析：unknown-block(179,2)
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        在 Linux 驅動主次設備號規範（Major/Minor Numbers）中，主編號 <code class="text-amber-300 bg-slate-900 px-1 py-0.5 rounded font-mono">179</code> 代表 MMC/SD 區塊設備控制器（<code class="text-slate-300 font-mono">/dev/mmcblk0</code>），次編號 <code class="text-amber-300 bg-slate-900 px-1 py-0.5 rounded font-mono">2</code> 代表第二個磁碟分區（<code class="text-slate-300 font-mono">/dev/mmcblk0p2</code>）。
+                    </p>
+                    <p class="text-sm text-slate-400">
+                        核心標註 <code class="text-rose-400 font-mono">unknown-block</code>，意味著核心目前的區塊設備子系統（Block Layer）中，完全沒有向核心註冊該主編號 179 的驅動實體，核心根本認不得這顆 SD 控制器！
+                    </p>
+                </div>
+
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-rose-300 flex items-center gap-2">
+                        <i class="fa-solid fa-skull-crossbones text-sm"></i> 「先有雞還是先有蛋」的驅動死鎖
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        檢查自編核心的 <code class="text-sky-300 font-mono">.config</code> 設定檔，發現 <code class="text-rose-400 font-mono">CONFIG_MMC=m</code>、<code class="text-rose-400 font-mono">CONFIG_MMC_BLOCK=m</code> 與 <code class="text-rose-400 font-mono">CONFIG_EXT4_FS=m</code> 被設成了可載入模組（Loadable Kernel Module）。
+                    </p>
+                    <p class="text-sm text-slate-400">
+                        在沒有使用 initramfs / initrd 記憶體暫存碟的系統中，動態模組檔案（<code class="text-slate-300 font-mono">.ko</code>）存放於磁碟分區上的 <code class="text-slate-300 font-mono">/lib/modules/</code>。核心要掛載 rootfs 必須先有驅動，但加載驅動又必須先掛載 rootfs，造成死鎖直接崩潰。
+                    </p>
+                </div>
+            </div>
+
+            <!-- 開機掛載時序流程解析 -->
+            <div class="bg-slate-800/40 border border-slate-700/60 rounded-lg p-5 space-y-3">
+                <h4 class="text-sm font-semibold text-slate-200 uppercase tracking-wider font-mono">Early Boot Sequence 核心開機時序分析：</h4>
+                <div class="text-xs font-mono bg-slate-950 p-4 rounded text-slate-300 space-y-2 leading-relaxed border border-slate-800">
+                    <p><span class="text-sky-400">1. kernel_init()</span> &rarr; 核心進入 PID 1 初始化常式。</p>
+                    <p><span class="text-sky-400">2. prepare_namespace()</span> &rarr; 解析 bootargs (root=/dev/mmcblk0p2)。</p>
+                    <p><span class="text-sky-400">3. mount_block_root()</span> &rarr; 尋找 major=179 區塊設備，呼叫 get_gendisk()。</p>
+                    <p><span class="text-rose-400">4. [FAIL] 查無 MMC Driver</span> &rarr; 驅動尚未 insmod，bdev 指標為 NULL，觸發 panic()！</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組三：排查與修復步驟 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                    <i class="fa-solid fa-wrench"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組三：排查與修復步驟 (Step-by-Step Fix)</h2>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 步驟 1 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">1</span>
+                        檢查 U-Boot 傳遞之開機參數 (bootargs)
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        在 U-Boot 命令列中輸入 <code class="text-sky-300 font-mono">printenv bootargs</code>，確認設備路徑無拼寫錯誤且包含 <code class="text-emerald-400 font-mono">rootwait</code>（讓核心等待 MMC 總線枚舉完畢）：
+                    </p>
+                    <pre class="language-bash"><code class="language-bash"># U-Boot 開機參數正確範例
+setenv bootargs "console=ttyAMA0,115200 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw"
+saveenv</code></pre>
+                </div>
+
+                <!-- 步驟 2 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">2</span>
+                        修改 Kernel Kconfig 配置：將關鍵驅動強制改為 Built-in (=y)
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        執行 <code class="text-sky-300 font-mono">make menuconfig</code> 或直接編輯 <code class="text-sky-300 font-mono">arch/arm/configs/bcm2835_defconfig</code>，將 MMC 控制器與 ext4 檔案系統改為編譯進核心（=y 而非 =m）：
+                    </p>
+                    <pre class="language-diff"><code class="language-diff">--- a/.config
++++ b/.config
+@@ -1945,8 +1945,8 @@
+-CONFIG_EXT4_FS=m
++CONFIG_EXT4_FS=y
+ CONFIG_EXT4_FS_POSIX_ACL=y
+ CONFIG_EXT4_FS_SECURITY=y
+@@ -3420,9 +3420,9 @@
+-CONFIG_MMC=m
++CONFIG_MMC=y
+ CONFIG_MMC_BLOCK=y
+-CONFIG_MMC_BCM2835=m
++CONFIG_MMC_BCM2835=y</code></pre>
+                </div>
+
+                <!-- 步驟 3 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">3</span>
+                        重新編譯核心並燒錄至開機分區
+                    </div>
+                    <pre class="language-bash"><code class="language-bash"># 交叉編譯 Kernel Image 與設備樹
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc) zImage modules dtbs
+
+# 部署 zImage 至 SD 卡 boot 分區（fat32）
+sudo cp arch/arm/boot/zImage /media/$USER/boot/kernel7.img
+sudo cp arch/arm/boot/dts/bcm2835-rpi-b.dtb /media/$USER/boot/
+sync</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組四：驗證與預防措施 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組四：驗證與預防措施 (Verification & Checklist)</h2>
+            </div>
+
+            <!-- 驗證日誌 -->
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                <h3 class="text-sm font-semibold text-emerald-400 font-mono flex items-center gap-2">
+                    <i class="fa-solid fa-check"></i> 驗證修復成功日誌 (dmesg)
+                </h3>
+                <div class="terminal-bg border border-slate-800 rounded p-4 font-mono text-xs text-slate-300 space-y-1">
+                    <p class="text-emerald-400">[    1.821033] mmc0: new high speed SDHC card at address e624</p>
+                    <p class="text-emerald-400">[    1.824550] mmcblk0: mmc0:e624 SC32G 29.7 GiB</p>
+                    <p class="text-emerald-400">[    1.829120]  mmcblk0: p1 p2</p>
+                    <p class="text-emerald-400">[    2.104230] EXT4-fs (mmcblk0p2): mounted filesystem with ordered data mode. Opts: (null)</p>
+                    <p class="text-emerald-400">[    2.112450] VFS: Mounted root (ext4 filesystem) on device 179:2.</p>
+                    <p class="text-sky-400">[    2.124010] Run /sbin/init as init process</p>
+                </div>
+            </div>
+
+            <!-- 防呆檢查清單 -->
+            <div class="bg-slate-800/60 border border-slate-700/80 rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2 font-mono">
+                    <i class="fa-solid fa-clipboard-list text-sky-400"></i> BSP 維護預防清單 (Checklist)
+                </h3>
+                <ul class="space-y-2.5 text-xs text-slate-300">
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>根目錄儲存媒介驅動一律 Built-in：</strong>凡是 rootfs 所在的儲存晶片（eMMC、NAND、SPI-NOR、SATA）及其所屬的主機控制器驅動，不得編譯為模組 <code class="text-rose-400 font-mono">=m</code>。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>檔案系統驅動一律 Built-in：</strong>若 rootfs 為 ext4、ubifs、squashfs，該 FS 模組必須設為 <code class="text-emerald-400 font-mono">=y</code>。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>U-Boot bootargs 標配 rootwait：</strong>MMC/SD 卡開機必須加上 <code class="text-sky-300 font-mono">rootwait</code>，避免主機控制器枚舉較慢時提前 panic。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>CI/CD Defconfig Lint 檢查：</strong>在 GitHub Actions 或 Jenkins 建置腳本中加入 <code class="text-sky-300 font-mono">scripts/diffconfig</code> 檢查，阻擋將關鍵啟動選項改為模組的 Pull Request。</span>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 底部版權 -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
+        Embedded Linux Debug CookBook &bull; Powered by Antigravity Agent &bull; 2026-11-09
+    </footer>
+
+    <!-- Prism.js Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-diff.min.js"></script>
+</body>
+</html>

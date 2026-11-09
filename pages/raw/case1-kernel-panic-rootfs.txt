@@ -1,0 +1,20 @@
+【問題現象】
+板子開機時 Linux Kernel 啟動到一半崩潰，dmesg 停止並印出錯誤訊息：
+[    2.341205] Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(179,2)
+[    2.349012] CPU: 0 PID: 1 Comm: swapper/0 Not tainted 5.15.0 #1
+[    2.355100] Hardware name: BCM2835
+[    2.358500] Call trace:
+[    2.361000] [<c010c210>] dump_backtrace+0x0/0x15c
+[    2.365800] [<c08e5f20>] panic+0x12c/0x334
+
+【排查經過與根本原因】
+1. 檢查 U-Boot 開機參數 (bootargs)，發現傳入的 root=/dev/mmcblk0p2。
+2. 但進入 Kernel 編譯選單發現，該自編核心將 MMC 驅動與 ext4 檔案系統編譯為 Kernel Module (CONFIG_MMC=m, CONFIG_EXT4_FS=m)，而不是內建進核心 (y)。
+3. 開機時系統根本還沒掛載 rootfs，無法載入 /lib/modules 內的驅動，導致無法辨識 SD 卡第二分區。
+
+【解決方案】
+重新配置 make menuconfig：
+- CONFIG_MMC=y
+- CONFIG_MMC_BLOCK=y
+- CONFIG_EXT4_FS=y
+重新編譯 zImage 並燒錄至 SD 卡 boot 分區，重開機成功進入 /sbin/init。

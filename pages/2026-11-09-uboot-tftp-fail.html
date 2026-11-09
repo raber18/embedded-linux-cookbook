@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>U-Boot TFTP 下載逾時與乙太網路 PHY Reset 失敗分析 - Embedded Linux Debug CookBook</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Prism.js Tomorrow Theme CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <!-- MathJax CDN -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']]
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        .terminal-bg {
+            background-color: #0B0F19;
+        }
+        pre[class*="language-"] {
+            background: #0B0F19 !important;
+            margin: 0 !important;
+            padding: 1rem !important;
+            border-radius: 0 0 0.5rem 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen font-sans selection:bg-sky-500 selection:text-white">
+
+    <!-- 頂部導航 -->
+    <header class="border-b border-slate-800 bg-slate-950/70 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <a href="../index.html" class="flex items-center gap-2 text-slate-400 hover:text-sky-400 transition text-sm font-medium">
+                    <i class="fa-solid fa-arrow-left"></i> 返回首頁
+                </a>
+                <span class="text-slate-600">/</span>
+                <span class="text-xs font-mono text-slate-400">Bootloader & Network Debug Entry</span>
+            </div>
+            <div class="text-xs text-slate-400 font-mono flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span>Severity: Warning</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-10 space-y-10">
+
+        <!-- Header 區域 -->
+        <section class="bg-slate-800 border border-slate-700 rounded-xl p-8 shadow-xl relative overflow-hidden">
+            <div class="absolute -right-6 -bottom-10 text-slate-700/20 text-9xl pointer-events-none font-mono font-bold select-none">
+                TFTP
+            </div>
+            <div class="relative z-10 space-y-4">
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <span class="text-slate-400 font-mono"><i class="fa-regular fa-calendar-days mr-1.5"></i>2026-11-09</span>
+                    <span class="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold tracking-wide">
+                        <i class="fa-solid fa-triangle-exclamation mr-1"></i>Warning
+                    </span>
+                    <div class="flex flex-wrap gap-1.5 ml-auto">
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">U-Boot</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Network</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Ethernet PHY</span>
+                        <span class="px-2.5 py-0.5 text-xs rounded bg-slate-700/80 text-sky-400 border border-slate-600 font-mono">Device Tree</span>
+                    </div>
+                </div>
+
+                <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-snug">
+                    U-Boot TFTP 下載逾時與乙太網路 PHY Reset 失敗分析
+                </h1>
+
+                <p class="text-slate-400 text-sm sm:text-base leading-relaxed">
+                    在 U-Boot 開發階段使用 TFTP 網路下載 Linux 核心與 DTB 映像時遭遇 PHY reset timed out 伴隨 link down，後續重試噴出 File not found。本文完整剖析乙太網路 PHY 硬體復位時序要求、U-Boot 環境變數網段設定以及 Host 端 TFTP Daemon 權限機制。
+                </p>
+            </div>
+        </section>
+
+        <!-- 模組一：問題現象與日誌重現 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-rose-500/10 text-rose-400 rounded-lg">
+                    <i class="fa-solid fa-bug"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組一：問題現象與日誌重現 (Symptom & Log Dump)</h2>
+            </div>
+
+            <p class="text-sm text-slate-300">
+                開發板進入 U-Boot 命令列後執行 TFTP 下載核心指令，終端機回傳 PHY 晶片重置逾時，網路連線失敗，並於重試時報錯中斷：
+            </p>
+
+            <!-- 終端機模擬區塊 -->
+            <div class="terminal-bg border border-slate-800 rounded-lg overflow-hidden shadow-2xl">
+                <div class="bg-slate-950/80 px-4 py-2.5 border-b border-slate-800/80 flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full bg-rose-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500/80 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-emerald-500/80 inline-block"></span>
+                        <span class="text-xs text-slate-400 font-mono ml-2">U-Boot Console Dump</span>
+                    </div>
+                    <span class="text-xs text-amber-400/80 font-mono">PHY & TFTP Timeout</span>
+                </div>
+                <pre class="language-bash"><code class="language-bash">=> tftp 0x82000000 zImage
+ethernet@01c50000: PHY reset timed out
+ETH: link down
+TFTP error: 'File not found' (1)
+Not retrying...
+Retry count exceeded; starting again
+missing or malformed file: 'zImage'</code></pre>
+            </div>
+        </section>
+
+        <!-- 模組二：根本原因分析 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-sky-500/10 text-sky-400 rounded-lg">
+                    <i class="fa-solid fa-microscope"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組二：根本原因分析 (Root Cause Analysis)</h2>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-rose-300 flex items-center gap-2">
+                        <i class="fa-solid fa-clock text-sm"></i> 1. PHY 硬體 Reset 時序不足
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        乙太網路 PHY（如 Realtek RTL8211 或 Microchip KSZ9031）硬體規格規定，硬體重置腳位（<code class="text-sky-300 font-mono">reset-gpios</code>）拉低時間至少需 10ms，且在釋放重置後，晶片內部 PLL 振盪器與類比前端需約 30ms ~ 50ms 穩定時間。
+                    </p>
+                    <p class="text-xs text-slate-400">
+                        原 Device Tree 僅設定 <code class="text-rose-400 font-mono">phy-reset-duration = &lt;10&gt;</code> 且無 post-delay，U-Boot 在 PHY 尚未恢復時即透過 MDIO 讀取暫存器，造成 Timeout 與 link down。
+                    </p>
+                </div>
+
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-amber-300 flex items-center gap-2">
+                        <i class="fa-solid fa-network-wired text-sm"></i> 2. 網路參數與 Host IP 漂移
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        開發板 U-Boot 靜態設定的 <code class="text-sky-300 font-mono">serverip</code> 為 <code class="text-slate-200 font-mono">192.168.1.100</code>，但開發用 Host PC 由於路由器 DHCP 重新配發租約，實際 IP 已漂移為 <code class="text-emerald-400 font-mono">192.168.1.120</code>。
+                    </p>
+                    <p class="text-xs text-slate-400">
+                        兩者 IP 網段或主機位址不匹配，導致 U-Boot 發送 ARP 請求無人應答，無法建立 UDP TFTP 連線。
+                    </p>
+                </div>
+
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-lg p-5 space-y-3">
+                    <h3 class="text-base font-semibold text-sky-300 flex items-center gap-2">
+                        <i class="fa-solid fa-file-shield text-sm"></i> 3. TFTP 根目錄權限隔離
+                    </h3>
+                    <p class="text-sm text-slate-300 leading-relaxed">
+                        Host 端安裝的 <code class="text-sky-300 font-mono">tftpd-hpa</code> 服務預設以非特權使用者（<code class="text-slate-200 font-mono">tftp</code>）執行。
+                    </p>
+                    <p class="text-xs text-slate-400">
+                        編譯完成的 <code class="text-slate-200 font-mono">zImage</code> 被以 <code class="text-rose-400 font-mono">0600 (root:root)</code> 複製進 <code class="text-sky-300 font-mono">/var/lib/tftpboot/</code>，TFTP 伺服器無讀取權限，在 RFC 1350 協議中回報 Error Code 1（File not found / Access violation）。
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組三：排查與修復步驟 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                    <i class="fa-solid fa-screwdriver-wrench"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組三：排查與修復步驟 (Step-by-Step Fix)</h2>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 步驟 1 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">1</span>
+                        修改 Device Tree：延長 PHY Reset Duration 與 Post Delay
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        修改板級 Device Tree 中乙太網路 MAC / MDIO 節點，將 Reset 脈衝時間拉長至 50ms，並加入 30ms 的復位後延遲：
+                    </p>
+                    <pre class="language-diff"><code class="language-diff">--- a/arch/arm/dts/sun8i-h3-board.dts
++++ b/arch/arm/dts/sun8i-h3-board.dts
+@@ -112,6 +112,8 @@
+ &amp;emac {
+ 	phy-handle = &lt;&amp;ext_rgmii_phy&gt;;
+ 	phy-mode = "rgmii-id";
+-	phy-reset-duration = &lt;10&gt;;
++	phy-reset-duration = &lt;50&gt;;
++	phy-reset-post-delay = &lt;30&gt;;
+ 	allwinner,reset-gpio = &lt;&amp;pio 3 14 GPIO_ACTIVE_LOW&gt;; /* PD14 */
+ 	status = "okay";
+ };</code></pre>
+                </div>
+
+                <!-- 步驟 2 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">2</span>
+                        校正 U-Boot 網路環境變數並 Ping 驗證
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        確認 Host 端當前 IP（<code class="text-sky-300 font-mono">ip a</code> 顯示為 192.168.1.120），在 U-Boot 設定同一網段 IP 並儲存：
+                    </p>
+                    <pre class="language-bash"><code class="language-bash"># 設定板子 IP 與 TFTP Server IP
+setenv ipaddr 192.168.1.50
+setenv serverip 192.168.1.120
+setenv netmask 255.255.255.0
+saveenv
+
+# 測試雙向網路連通性
+ping 192.168.1.120</code></pre>
+                </div>
+
+                <!-- 步驟 3 -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                    <div class="flex items-center gap-2 text-sky-400 font-semibold text-base">
+                        <span class="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-mono">3</span>
+                        修正 Host 端 TFTP 服務檔案權限
+                    </div>
+                    <p class="text-sm text-slate-300">
+                        開放 TFTP 根目錄檔案之 Other 讀取權限，確保 tftpd-hpa 常駐進程可正常讀取檔案：
+                    </p>
+                    <pre class="language-bash"><code class="language-bash"># 賦予檔案全域讀取權限
+sudo chmod 644 /var/lib/tftpboot/zImage
+sudo chmod 644 /var/lib/tftpboot/*.dtb
+
+# 重啟 TFTP 服務
+sudo systemctl restart tftpd-hpa
+sudo systemctl status tftpd-hpa</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- 模組四：驗證與預防措施 -->
+        <section class="space-y-4">
+            <div class="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div class="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg">
+                    <i class="fa-solid fa-circle-check"></i>
+                </div>
+                <h2 class="text-xl font-bold text-white tracking-wide">模組四：驗證與預防措施 (Verification & Checklist)</h2>
+            </div>
+
+            <!-- 驗證日誌 -->
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 space-y-3">
+                <h3 class="text-sm font-semibold text-emerald-400 font-mono flex items-center gap-2">
+                    <i class="fa-solid fa-check"></i> 驗證修復成功日誌 (U-Boot TFTP Transfer)
+                </h3>
+                <div class="terminal-bg border border-slate-800 rounded p-4 font-mono text-xs text-slate-300 space-y-1">
+                    <p class="text-slate-400">=> ping 192.168.1.120</p>
+                    <p class="text-emerald-400">ethernet@01c50000: PHY reset complete, link up (1000Mbps/Full)</p>
+                    <p class="text-emerald-400">host 192.168.1.120 is alive</p>
+                    <p class="text-slate-400 pt-2">=> tftp 0x82000000 zImage</p>
+                    <p class="text-slate-300">Using ethernet@01c50000 device</p>
+                    <p class="text-slate-300">TFTP from server 192.168.1.120; our IP address is 192.168.1.50</p>
+                    <p class="text-slate-300">Filename 'zImage'.</p>
+                    <p class="text-slate-300">Load address: 0x82000000</p>
+                    <p class="text-slate-300">Loading: #################################################################</p>
+                    <p class="text-emerald-400">         3.2 MiB/s</p>
+                    <p class="text-emerald-400">done</p>
+                    <p class="text-emerald-400">Bytes transferred = 6432128 (622580 hex)</p>
+                </div>
+            </div>
+
+            <!-- 防呆檢查清單 -->
+            <div class="bg-slate-800/60 border border-slate-700/80 rounded-lg p-5">
+                <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2 font-mono">
+                    <i class="fa-solid fa-clipboard-list text-sky-400"></i> BSP 與除錯環境防呆清單 (Checklist)
+                </h3>
+                <ul class="space-y-2.5 text-xs text-slate-300">
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>PHY Datasheet Reset 時序審查：</strong>繪製或移植硬體時，務必參閱 PHY 晶片手冊中「Power-On and Reset Characteristics」，設定充足的 Reset hold time 與 Recovery time。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>Host IP 靜態分配：</strong>開發用主機建議設定固定靜態 IP 或於路由器綁定 MAC 位址，避免 DHCP 重新配發導致 U-Boot 與 NFS/TFTP 中斷。</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa-solid fa-square-check text-emerald-400 mt-0.5"></i>
+                        <span><strong>自動化構建權限規範：</strong>在 build 腳本或 Makefile 加入 <code class="text-sky-300 font-mono">install -m 644</code>，確保拷貝至 tftpboot 的映像具備全域可讀權限。</span>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 底部版權 -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
+        Embedded Linux Debug CookBook &bull; Powered by Antigravity Agent &bull; 2026-11-09
+    </footer>
+
+    <!-- Prism.js Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-diff.min.js"></script>
+</body>
+</html>
